@@ -13,6 +13,13 @@ W, H = 1080, 1350
 sess = new_session("isnet-general-use")   # borda fina
 sess2 = new_session("u2net")              # pega o miolo branco (barba/rosto) que o isnet às vezes perde
 
+def _borda(op, x, it, **kw):
+    """Aplica operação morfológica sem comer a borda da imagem (replica a borda antes)."""
+    m = it + 2
+    xp = np.pad(x, m, mode="edge")
+    return op(xp, iterations=it, **kw)[m:-m, m:-m]
+
+
 def logo_rgba(path):
     lg = Image.open(path).convert("RGBA")
     if lg.getchannel("A").getextrema()[0] < 250:
@@ -36,21 +43,26 @@ def process(src, dst, logo, estilo):
     ai = np.maximum(ai, (u2 & (ai > 0.12)).astype(float))   # só reforça onde o isnet já viu algo
     mx, mn = rgb.max(-1), rgb.min(-1)
     sat = (mx - mn) / (mx + 1)
-    dark = nd.binary_closing(mx < 60, iterations=10)  # preto (suporte/botas), fecha a colmeia
+    dark = _borda(nd.binary_closing, mx < 60, 10)  # preto (suporte/botas), fecha a colmeia
     lab, n = nd.label(dark)
     if n:
         big_c = lab == (1 + np.argmax(nd.sum(dark, lab, range(1, n + 1))))
         xs_ = np.where(big_c.any(0))[0]; span = xs_.max() - xs_.min() + 1
+        tol_b = int(dark.shape[1] * 0.03)
+        atravessa = xs_.min() <= tol_b and xs_.max() >= dark.shape[1] - 1 - tol_b
         for y in np.where(big_c.any(1))[0]:          # tampo da bancada: preenche linha a linha
             row = np.where(big_c[y])[0]
             if row.size > 0.45 * span:
-                dark[y, row.min():row.max() + 1] = True
+                a_, b_ = row.min(), row.max() + 1
+                if atravessa:                          # suporte sai da foto: completa até a borda
+                    a_, b_ = 0, dark.shape[1]
+                dark[y, a_:b_] = True
     fg = dark | (sat > 0.35)                          # ou cor forte
-    fg = nd.binary_opening(fg, iterations=2)
+    fg = _borda(nd.binary_opening, fg, 2)
     lab, n = nd.label(fg); sizes = nd.sum(fg, lab, range(1, n + 1))
     fg = np.isin(lab, 1 + np.where(sizes > 0.002 * fg.size)[0])
     fg = fg | (ai > 0.5)
-    fg = nd.binary_closing(fg, structure=np.ones((3, 3)), iterations=22)  # rosto/barba branca colado na parede
+    fg = _borda(nd.binary_closing, fg, 22, structure=np.ones((3, 3)))  # rosto/barba branca colado na parede
     holes = nd.binary_fill_holes(fg) & ~fg          # só tapa buracos pequenos (barba branca)
     hl, hn = nd.label(holes); hs = nd.sum(holes, hl, range(1, hn + 1))
     fg = fg | np.isin(hl, 1 + np.where(hs < 0.004 * fg.size)[0])
@@ -86,11 +98,18 @@ def process(src, dst, logo, estilo):
     h, w = rgb.shape[:2]
     ys, xs = np.where(alpha > 0.3)
     y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
-    toca_esq, toca_dir = x0 <= 2, x1 >= w - 3
+    tol = int(w * 0.03)
+    toca_esq, toca_dir = x0 <= tol, x1 >= w - 1 - tol
     pad = int(0.04 * max(y1 - y0, x1 - x0))
     y0, y1 = max(0, y0 - pad), min(h, y1 + pad); x0, x1 = max(0, x0 - pad), min(w, x1 + pad)
     vit = estilo == "vitrine"
     s = min(W * (0.84 if vit else 0.80) / (x1 - x0), H * (0.56 if vit else 0.50) / (y1 - y0))
+    sangra = False
+    if toca_esq and toca_dir:
+        # produto (ex.: suporte) atravessa a foto toda: deixa sair pelas bordas do quadro em vez de mostrar o corte
+        s_b = W / w
+        if (y1 - y0) * s_b <= H * 0.66:
+            x0, x1, s, sangra = 0, w, s_b, True
     def fit(arr):
         return np.asarray(Image.fromarray(arr[y0:y1, x0:x1]).resize((int((x1 - x0) * s), int((y1 - y0) * s)), Image.LANCZOS)).astype(float)
     P = fit(prod.astype(np.uint8))
@@ -104,12 +123,7 @@ def process(src, dst, logo, estilo):
     S = 1 - (1 - S) * (fy * fx)[..., None]
     if vit:
         S = np.ones_like(S)                       # na vitrine a sombra/reflexo são do cenário novo
-    # se o suporte saía cortado na foto original, esmaece a ponta em vez de mostrar o corte seco
-    fade = np.ones(pw)
-    if toca_esq: fade = np.minimum(fade, ramp(pw, pw * 0.12))
-    if toca_dir: fade = np.minimum(fade, ramp(pw, pw * 0.12)[::-1])
-    escuro = (P.max(-1, keepdims=True) < 110)          # só o suporte preto esmaece, nunca o produto colorido
-    A = np.where(escuro, A * fade[None, :, None], A)
+    pw = min(pw, W); P, A, S = P[:, :pw], A[:, :pw], S[:, :pw]
     oy, ox = int(H * (0.93 if vit else 0.90)) - ph, (W - pw) // 2
     desk = int(np.clip(oy + ph * 0.42, H * 0.46, H * 0.62)) if vit else int(oy + ph * 0.80)
     scene = cenario(estilo, desk, (ox + pw / 2, oy + ph * 0.45))
