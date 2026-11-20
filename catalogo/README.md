@@ -29,3 +29,12 @@ pip install "rembg[cpu]" scipy pillow numpy   # usa os modelos isnet + u2net
 python3 tools/padrao_fotos.py --estilo=vitrine catalogo/marca/logo-warez3dworld.png \
   catalogo/produtos/X/original/foto.jpg catalogo/produtos/X/editada/foto.jpg
 ```
+
+## Produto branco em fundo branco (IA não enxerga)
+Quando parte do produto some no recorte (ex.: bandeja branca), gere uma máscara manual e passe com `--extra`:
+```bash
+# bandeja oval: x_esq x_dir y_tras y_frente_topo altura_borda raio_x (em pixels da foto original)
+python3 tools/mascara_bandeja.py FOTO.jpg FOTO.mascara.png 22 1082 1100 1319 105 125
+python3 tools/padrao_fotos.py --extra=FOTO.mascara.png catalogo/marca/logo-warez3dworld.png FOTO.jpg SAIDA.jpg
+```
+Qualquer PNG preto/branco do tamanho da foto serve (branco = produto) — dá pra pintar no celular também.

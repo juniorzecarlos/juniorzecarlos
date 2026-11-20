@@ -1,7 +1,7 @@
 """Padrão de foto Warez 3DWorld: troca o fundo por parede com a logo e dá um leve ajuste de luz.
 O produto não é alterado (só brilho/contraste leve).
 
-Uso: python3 tools/padrao_fotos.py [--estilo=vitrine|madeira|estudio|marca] catalogo/marca/logo-warez3dworld.png ORIG1 SAIDA1 [ORIG2 SAIDA2 ...]
+Uso: python3 tools/padrao_fotos.py [--estilo=vitrine|madeira|estudio|marca] [--extra=mascara.png] catalogo/marca/logo-warez3dworld.png ORIG1 SAIDA1 [ORIG2 SAIDA2 ...]
 Requer: pip install "rembg[cpu]" scipy pillow numpy
 """
 import sys, numpy as np
@@ -33,7 +33,7 @@ def logo_rgba(path):
     lg.putalpha(Image.fromarray(alpha).filter(ImageFilter.GaussianBlur(1)))
     return lg.crop(lg.getbbox())
 
-def process(src, dst, logo, estilo):
+def process(src, dst, logo, estilo, extra=None):
     im = Image.open(src).convert("RGB")
     rgb = np.asarray(im).astype(float)
     # 1) máscara do produto: IA + regra de cor (fundo = claro e sem saturação)
@@ -76,6 +76,9 @@ def process(src, dst, logo, estilo):
     fundo = nd.binary_dilation(np.isin(lab, borda), iterations=1)
     alpha = alpha * (1 - nd.gaussian_filter(fundo.astype(float), 1.0))
     alpha = np.where(alpha < 0.15, 0, alpha)        # zera resíduo (senão vira 'caixa' clara no fundo)
+    if extra is not None:                           # máscara manual: o que a IA não enxerga (ex.: bandeja branca)
+        ex = np.asarray(Image.open(extra).convert("L").resize(im.size)).astype(float) / 255
+        alpha = np.maximum(alpha, ex)
     alpha = np.minimum(alpha, nd.grey_erosion(alpha, size=3)) ** 1.4   # tira o halo branco
     # 2) leve correção de luz só no produto
     prod = Image.fromarray(rgb.astype(np.uint8))
@@ -268,9 +271,13 @@ ESTILOS = ("vitrine", "madeira", "estudio", "marca")
 if __name__ == "__main__":
     args = sys.argv[1:]
     estilo = "vitrine"
-    if args and args[0].startswith("--estilo="):
-        estilo = args.pop(0).split("=", 1)[1]
-        assert estilo in ESTILOS, f"estilos: {ESTILOS}"
+    extra = None
+    while args and args[0].startswith("--"):
+        k, v = args.pop(0)[2:].split("=", 1)
+        if k == "estilo":
+            estilo = v; assert estilo in ESTILOS, f"estilos: {ESTILOS}"
+        elif k == "extra":
+            extra = v
     logo = logo_rgba(args[0])
     for src, dst in zip(args[1::2], args[2::2]):
-        process(src, dst, logo, estilo); print("ok", dst)
+        process(src, dst, logo, estilo, extra); print("ok", dst)
