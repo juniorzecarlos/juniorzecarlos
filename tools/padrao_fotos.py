@@ -68,6 +68,9 @@ def process(src, dst, logo, estilo, extra=None):
     fg = fg | np.isin(hl, 1 + np.where(hs < 0.004 * fg.size)[0])
     rule = np.asarray(Image.fromarray((fg * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(1.2))) / 255
     alpha = np.maximum(ai, rule)
+    # vão de verdade (ex.: entre ripas da cadeira): claro, sem cor e a IA diz fundo -> fica vazado
+    vao = (ai < 0.15) & (mn > 150) & (sat < 0.12) & ~u2
+    alpha = np.where(vao, ai, alpha)
     alpha = np.where(alpha > 0.97, 1, np.where(alpha < 0.12, 0, alpha))
     # remove chão/parede original que vazou: claro, sem cor e ligado à borda da foto
     claro = (mn > 135) & (sat < 0.13) & ~u2
